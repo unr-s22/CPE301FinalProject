@@ -63,7 +63,7 @@ void outputLCDScreen() {
     // Print temp values
     lcd.print("Temp: ");
     //lcd.print((float)dht.temperature);
-    lcd.print("C");
+    lcd.print("F");
   } 
 }
 
