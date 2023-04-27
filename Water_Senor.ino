@@ -22,14 +22,12 @@ volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
 #define RDA 0x80
 #define TBE 0x20
 
-// water level variable  
-unsigned int waterLevel;
-
-// Thresholds
-unsigned int waterThrehold = 100;
+#define SENSOR_PIN A1
+#define MIN_WATER_LEVEL 10
 
 void setup() {
 
+  Serial.begin(9600);
   // Initialize the ADC
   adc_init();
 
@@ -37,13 +35,21 @@ void setup() {
 
 void loop() {
 
-  // ADC signal wire (A1)
-  waterLevel = adc_read(1);
+  float voltage = readVoltage(SENSOR_PIN);
+  
+  float water_level = (voltage - 0.5) * 100;
+  
+  if (water_level < MIN_WATER_LEVEL){
+    Serial.println("Water is too low");
 
-if(waterLevel <= waterThrehold)
-{ 
+  }
 
+  delay(1000);
 }
+
+float readVoltage(int pin){
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
 }
 
 
