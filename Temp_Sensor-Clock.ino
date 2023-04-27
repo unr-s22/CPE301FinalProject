@@ -3,7 +3,7 @@
 #include "DHT.h" //humidity and temperature sensor library - Adafruit
 #include "RTClib.h" //clock library - Adafruit
 
-#define DHTPIN 2 //change this
+#define DHTPIN 12
 #define DHTTYPE DHT11 //our dht type
 
 DHT dht(DHTPIN, DHTTYPE);
