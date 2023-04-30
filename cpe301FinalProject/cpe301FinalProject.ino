@@ -18,6 +18,7 @@
 #define DHTTYPE DHT11 //our dht type
 #define SENSOR_PIN 1 // Analog Pin 1
 #define MIN_WATER_LEVEL 10
+#define TEMP_THRESHOLD 72.0
 
 /* --------- Addresses --------- */
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
@@ -31,9 +32,21 @@ volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
 volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
 volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
 
+volatile unsigned char *port_a = (unsigned char*) 0x22;
+volatile unsigned char *ddr_a = (unsigned char*) 0x21;
+volatile unsigned char *pin_a = (unsigned char*) 0x20;
+
 volatile unsigned char *port_b = (unsigned char*) 0x25;
 volatile unsigned char *ddr_b = (unsigned char*) 0x24;
 volatile unsigned char *pin_b = (unsigned char*) 0x23;
+
+/* ---- Timer Registers ---- */
+volatile unsigned char *myTCCR1A = (unsigned char *) 0x80;
+volatile unsigned char *myTCCR1B = (unsigned char *) 0x81;
+volatile unsigned char *myTCCR1C = (unsigned char *) 0x82;
+volatile unsigned char *myTIMSK1 = (unsigned char *) 0x6F;
+volatile unsigned int  *myTCNT1  = (unsigned  int *) 0x84;
+volatile unsigned char *myTIFR1 =  (unsigned char *) 0x36;
 
 /* --------- Global Variables --------- */
 // Disabled = 0, Idle = 1, Running = 2, Error = 3.
@@ -61,6 +74,12 @@ unsigned int tempMax = 26;  //temperature threshold for state change
 int previousStep = 0;
 Stepper stepper(2038, 8, 10, 9, 11);
 
+/* ---- LED Status Pins ---- */
+//Green LED:  pin 23
+//Blue LED:   pin 25
+//Yellow LED: pin 27
+//Red LED:    pin 29
+
 void setup() {
   U0init(9600);
   // Initialize LCD
@@ -81,6 +100,9 @@ void setup() {
   }
 
   outputLCDScreen(0, 0);
+
+  //Setup output pins for port A
+  *ddr_a |= 0xAA;
 }
 
 void loop() {
@@ -105,13 +127,29 @@ void loop() {
 
   if (waterLevel < MIN_WATER_LEVEL){
     printToSerial("Water is too low");
+    stateNum = 3;
   }
 
-  delay(1000);
 
   stepperControl();
 
   outputLCDScreen(hum, fahren);
+  //Disabled State
+  if (stateNum == 0) {
+
+  }
+  //Idle State
+  else if (stateNum == 1) {
+    idleState();
+  }
+  //Running State
+  else if (stateNum == 2) {
+
+  }
+  //Error State
+  else if (stateNum == 3) {
+    errorState();
+  }
 }
 
 //Continuously call this function to keep checking
@@ -123,7 +161,7 @@ void stepperControl() {
 }
 
 //Call this function with 1 to turn on the motor
-//Call this function with a 0 to turn off the motor
+//Call this function with 0 to turn off the motor
 void motorControl(int input) {
   if (input) {
     *port_b |= 0x80;
@@ -277,5 +315,59 @@ ISR (PCINT1_vect) /* PCINT1 for PJ1 */ {
         if(startButtonReleased) {
             startButtonReleased = false;
         }
+    }
+}
+
+void my_delay(int wait_in_millisec) {
+    for (int i=0; i<wait_in_millisec; i++) {
+        unsigned int ticks = 0.001 / 0.0000000625;
+        *myTCCR1B &= 0xF8;
+        *myTCNT1 = (unsigned int) (65536 - ticks);
+        * myTCCR1B |= 0b00000001;
+        while((*myTIFR1 & 0x01)==0);
+        *myTCCR1B &= 0xF8; 
+        *myTIFR1 |= 0x01;
+    }
+}
+
+void idleState() {
+    printToSerial("Idle state entered");
+    //Turn on green LED and turn off others
+    *port_a |= 0x02;
+    *port_a &= 0x56;
+
+    float waterLevel = (readVoltage(SENSOR_PIN) - 0.5) * 100;  
+    currentTime = rtc.now();
+    float temp = dht.readTemperature(true);
+
+    //compare temperature with threshold
+    if ( temp > TEMP_THRESHOLD) {
+        printToSerial(currentTime);
+        printToSerial("Temperature is above threshold");
+        stateNum = 2;
+    }
+
+    //check water level
+    if (waterLevel < MIN_WATER_LEVEL){
+        printToSerial(currentTime);
+        printToSerial("Water is too low");
+        stateNum = 3;
+    }
+}
+
+void errorState() {
+    printToSerial("Error state entered");
+    //turn on red LED and turn off others
+    *port_a |= 0x80;
+    *port_a &= 0xD5;
+
+    //display info while waiting for state change
+    while(stateNum == 3) {
+      lcd.print("ERROR: water level is too low");
+      my_delay(500);
+      float hum = dht.readHumidity();
+      float fahren = dht.readTemperature(true);
+      outputLCDScreen(hum, fahren);
+      my_delay(1000);
     }
 }
