@@ -18,7 +18,7 @@
 #define DHTTYPE DHT11 //our dht type
 #define SENSOR_PIN 1 // Analog Pin 1
 #define MIN_WATER_LEVEL 10
-#define TEMP_THRESHOLD 72.0
+#define TEMP_THRESHOLD 72.0 // In Fahrenheit
 
 /* --------- Addresses --------- */
 volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0;
@@ -40,7 +40,6 @@ volatile unsigned char *port_b = (unsigned char*) 0x25;
 volatile unsigned char *ddr_b = (unsigned char*) 0x24;
 volatile unsigned char *pin_b = (unsigned char*) 0x23;
 
-/* ---- Timer Registers ---- */
 volatile unsigned char *myTCCR1A = (unsigned char *) 0x80;
 volatile unsigned char *myTCCR1B = (unsigned char *) 0x81;
 volatile unsigned char *myTCCR1C = (unsigned char *) 0x82;
@@ -80,6 +79,9 @@ Stepper stepper(2038, 8, 10, 9, 11);
 //Yellow LED: pin 27
 //Red LED:    pin 29
 
+/* ---- Button Pin ---- */
+// Pin 31
+
 void setup() {
   U0init(9600);
   // Initialize LCD
@@ -106,6 +108,47 @@ void setup() {
 }
 
 void loop() {
+  if (stateNum == 0) {
+    disabledProcess();
+  } else if (stateNum == 1) {
+    //idleProcess();
+  } else if (stateNum == 2) {
+    runningProcess();
+  } else if (stateNum == 3) {
+    //errorProcess();
+  }
+}
+
+void disabledProcess() {
+  // Handled by ISR
+}
+
+void idleState() {
+    printToSerial("Idle state entered");
+    //Turn on green LED and turn off others
+    *port_a |= 0x02;
+    *port_a &= 0x56;
+
+    float waterLevel = (readVoltage(SENSOR_PIN) - 0.5) * 100;  
+    currentTime = rtc.now();
+    float temp = dht.readTemperature(true);
+
+    //compare temperature with threshold
+    if ( temp > TEMP_THRESHOLD) {
+        printToSerial(currentTime);
+        printToSerial("Temperature is above threshold");
+        stateNum = 2;
+    }
+
+    //check water level
+    if (waterLevel < MIN_WATER_LEVEL){
+        printToSerial(currentTime);
+        printToSerial("Water is too low");
+        stateNum = 3;
+    }
+}
+
+void runningProcess() {
   float voltage = readVoltage(SENSOR_PIN);
   float waterLevel = (voltage - 0.5) * 100;  
   currentTime = rtc.now();
@@ -125,30 +168,47 @@ void loop() {
     return;
   }
 
-  if (waterLevel < MIN_WATER_LEVEL){
-    printToSerial("Water is too low");
-    stateNum = 3;
-  }
-
-
   stepperControl();
 
   outputLCDScreen(hum, fahren);
-  //Disabled State
-  if (stateNum == 0) {
 
-  }
-  //Idle State
-  else if (stateNum == 1) {
-    idleState();
-  }
-  //Running State
-  else if (stateNum == 2) {
+  if (waterLevel < MIN_WATER_LEVEL){
+    printToSerial("Water low, entered Error state.");
+    stateNum = 3; // Error State
+    // Write to LED's
+    prevMin--;
 
+    lcd.setCursor(0, 0);
+    lcd.print("ERROR:");
+    lcd.setCursor(0, 1);
+    lcd.print("Water low");
+
+    motorControl(0);
+  } else if (dht.readTemperature(true) <= TEMP_THRESHOLD) 2.0
+    printToSerial("Temps too high, entered Idle state.");
+    stateNum = 1; // Idle State
+    // Write to LED's
+    motorControl(0);
   }
-  //Error State
-  else if (stateNum == 3) {
-    errorState();
+}
+
+void errorState() {
+  printToSerial("Error state entered");
+  //turn on red LED and turn off others
+  *port_a |= 0x80;
+  *port_a &= 0xD5;
+
+  //display info while waiting for state change
+  while(stateNum == 3) {
+    lcd.setCursor(0, 0);
+    lcd.print("ERROR:");
+    lcd.setCursor(0, 1);
+    lcd.print("Water low");
+    my_delay(500);
+    float hum = dht.readHumidity();
+    float fahren = dht.readTemperature(true);
+    outputLCDScreen(hum, fahren);
+    my_delay(1000);
   }
 }
 
@@ -161,7 +221,7 @@ void stepperControl() {
 }
 
 //Call this function with 1 to turn on the motor
-//Call this function with 0 to turn off the motor
+//Call this function with a 0 to turn off the motor
 void motorControl(int input) {
   if (input) {
     *port_b |= 0x80;
@@ -291,33 +351,6 @@ void printToSerial (String s) {
     }
 }
 
-ISR (PCINT1_vect) /* PCINT1 for PJ1 */ {
-    if(/* Input of the pin the button is connected to */) {
-        startButtonReleased = true;
-        if(stateNum != 0) {
-            printToSerial("Disabled state entered");
-            stateNum = 0; // Disabled
-            prevMin--;
-
-            motorControl(0); // turn off fan motor
-            
-            // We want to write out to our indicator Lights here
-        } else {
-            printToSerial("Idle state entered");
-            stateNum = 1; // Idle
-            prevMin--;
-
-            // We want to write out to our indicator Lights here
-        }
-    }
-
-    if(/* Input of the pin the button is connected to */) {
-        if(startButtonReleased) {
-            startButtonReleased = false;
-        }
-    }
-}
-
 void my_delay(int wait_in_millisec) {
     for (int i=0; i<wait_in_millisec; i++) {
         unsigned int ticks = 0.001 / 0.0000000625;
@@ -330,44 +363,36 @@ void my_delay(int wait_in_millisec) {
     }
 }
 
-void idleState() {
-    printToSerial("Idle state entered");
-    //Turn on green LED and turn off others
-    *port_a |= 0x02;
-    *port_a &= 0x56;
+ISR (PCINT1_vect) /* PCINT1 for PJ1 */ {
+    if(/* Input of the pin the button is connected to */) {
+        startButtonReleased = true;
+        if(stateNum != 0) {
+            printToSerial("Disabled state entered");
+            stateNum = 0; // Disabled
+            prevMin--;
 
-    float waterLevel = (readVoltage(SENSOR_PIN) - 0.5) * 100;  
-    currentTime = rtc.now();
-    float temp = dht.readTemperature(true);
+            motorControl(0); // turn off fan motor
+            
+            // We want to write out to our indicator Lights here
+            // *portYellowLED |= (0x01 << Pin);
+            // *portGreenLED &= ~(0x01 << Pin);
+            // *portRedLED &= ~(0x01 << Pin);
+            // *portBlueLED &= ~(0x01 << Pin);
+        } else {
+            printToSerial("Idle state entered");
+            stateNum = 1; // Idle
+            prevMin--;
 
-    //compare temperature with threshold
-    if ( temp > TEMP_THRESHOLD) {
-        printToSerial(currentTime);
-        printToSerial("Temperature is above threshold");
-        stateNum = 2;
+            // We want to write out to our indicator Lights here\
+            // *portGreenLED |= (0x01 << Pin);
+            // *portYellowLED &= ~(0x01 << Pin);
+            // *portBlueLED &= ~(0x01 << Pin);
+        }
     }
 
-    //check water level
-    if (waterLevel < MIN_WATER_LEVEL){
-        printToSerial(currentTime);
-        printToSerial("Water is too low");
-        stateNum = 3;
-    }
-}
-
-void errorState() {
-    printToSerial("Error state entered");
-    //turn on red LED and turn off others
-    *port_a |= 0x80;
-    *port_a &= 0xD5;
-
-    //display info while waiting for state change
-    while(stateNum == 3) {
-      lcd.print("ERROR: water level is too low");
-      my_delay(500);
-      float hum = dht.readHumidity();
-      float fahren = dht.readTemperature(true);
-      outputLCDScreen(hum, fahren);
-      my_delay(1000);
+    if(/* Input of the pin the button is connected to */) {
+        if(startButtonReleased) {
+            startButtonReleased = false;
+        }
     }
 }
