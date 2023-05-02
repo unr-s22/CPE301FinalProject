@@ -33,7 +33,6 @@ void loop() {
   dht.read(12); // read digital 12
 
   // Wait a few seconds between measurements.
-  delay(2000);
 
   // reading temp or humidity takes/delays about 250 milliseconds
   //slow sensor therefore some readings may be old (2 second delay)
