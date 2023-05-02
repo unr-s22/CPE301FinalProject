@@ -32,14 +32,22 @@ volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B;
 volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A;
 volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78;
 
+// LED Addresses
 volatile unsigned char *port_a = (unsigned char*) 0x22;
 volatile unsigned char *ddr_a = (unsigned char*) 0x21;
 volatile unsigned char *pin_a = (unsigned char*) 0x20;
 
+// Digital Pin Addresses
 volatile unsigned char *port_b = (unsigned char*) 0x25;
 volatile unsigned char *ddr_b = (unsigned char*) 0x24;
 volatile unsigned char *pin_b = (unsigned char*) 0x23;
 
+// Button Addresses
+volatile unsigned char *port_j = (unsigned char*) 0105;
+volatile unsigned char *ddr_j = (unsigned char*) 0x104;
+volatile unsigned char *pin_j = (unsigned char*) 0x2103;
+
+// Timer Addresses
 volatile unsigned char *myTCCR1A = (unsigned char *) 0x80;
 volatile unsigned char *myTCCR1B = (unsigned char *) 0x81;
 volatile unsigned char *myTCCR1C = (unsigned char *) 0x82;
@@ -80,10 +88,10 @@ Stepper stepper(2038, 8, 10, 9, 11);
 //Red LED:    pin 29
 
 /* ---- Button Pin ---- */
-// Pin 31
+// Digital Pin 0
 
 void setup() {
-  U0init(9600);
+  U0Init(9600);
   // Initialize LCD
   lcd.begin(16, 2);
   // Initialize DHT
@@ -91,6 +99,10 @@ void setup() {
 
   stepper.setSpeed(15);
   *ddr_b |= 0x80;
+  
+  *ddr_j &= 0b11111101;
+  *port_j |= 0b00000010;
+
   adc_init();
 
   // Start the RTC
@@ -108,18 +120,20 @@ void setup() {
 }
 
 void loop() {
+  stepperControl();
+  
   if (stateNum == 0) {
-    disabledProcess();
+    disabledState();
   } else if (stateNum == 1) {
-    //idleProcess();
+    idleState();
   } else if (stateNum == 2) {
-    runningProcess();
+    runningState();
   } else if (stateNum == 3) {
-    //errorProcess();
+    errorState();
   }
 }
 
-void disabledProcess() {
+void disabledState() {
   // Handled by ISR
 }
 
@@ -131,24 +145,25 @@ void idleState() {
 
     float waterLevel = (readVoltage(SENSOR_PIN) - 0.5) * 100;  
     currentTime = rtc.now();
+    float hmdty = dht.readHumidity();
     float temp = dht.readTemperature(true);
+
+    outputLCDScreen(hmdty, temp);
 
     //compare temperature with threshold
     if ( temp > TEMP_THRESHOLD) {
-        printToSerial(currentTime);
         printToSerial("Temperature is above threshold");
         stateNum = 2;
     }
 
     //check water level
     if (waterLevel < MIN_WATER_LEVEL){
-        printToSerial(currentTime);
         printToSerial("Water is too low");
         stateNum = 3;
     }
 }
 
-void runningProcess() {
+void runningState() {
   float voltage = readVoltage(SENSOR_PIN);
   float waterLevel = (voltage - 0.5) * 100;  
   currentTime = rtc.now();
@@ -184,7 +199,7 @@ void runningProcess() {
     lcd.print("Water low");
 
     motorControl(0);
-  } else if (dht.readTemperature(true) <= TEMP_THRESHOLD) 2.0
+  } else if (dht.readTemperature(true) <= TEMP_THRESHOLD) {
     printToSerial("Temps too high, entered Idle state.");
     stateNum = 1; // Idle State
     // Write to LED's
@@ -204,11 +219,9 @@ void errorState() {
     lcd.print("ERROR:");
     lcd.setCursor(0, 1);
     lcd.print("Water low");
-    my_delay(500);
-    float hum = dht.readHumidity();
-    float fahren = dht.readTemperature(true);
-    outputLCDScreen(hum, fahren);
-    my_delay(1000);
+    //float hum = dht.readHumidity();
+    //float fahren = dht.readTemperature(true);
+    //outputLCDScreen(hum, fahren);
   }
 }
 
@@ -257,7 +270,7 @@ void outputLCDScreen(float h, float f) {
   } 
 }
 
-void U0init(int U0baud) {
+void U0Init(int U0baud) {
   unsigned long FCPU = 16000000;
   unsigned int tbaud;
   tbaud = (FCPU / 16 / U0baud - 1);
@@ -351,20 +364,9 @@ void printToSerial (String s) {
     }
 }
 
-void my_delay(int wait_in_millisec) {
-    for (int i=0; i<wait_in_millisec; i++) {
-        unsigned int ticks = 0.001 / 0.0000000625;
-        *myTCCR1B &= 0xF8;
-        *myTCNT1 = (unsigned int) (65536 - ticks);
-        * myTCCR1B |= 0b00000001;
-        while((*myTIFR1 & 0x01)==0);
-        *myTCCR1B &= 0xF8; 
-        *myTIFR1 |= 0x01;
-    }
-}
-
-ISR (PCINT1_vect) /* PCINT1 for PJ1 */ {
-    if(/* Input of the pin the button is connected to */) {
+// PCINT1_vect is for PJ1 input
+ISR (PCINT1_vect) {
+    if(*pin_j == 1) {
         startButtonReleased = true;
         if(stateNum != 0) {
             printToSerial("Disabled state entered");
@@ -373,24 +375,19 @@ ISR (PCINT1_vect) /* PCINT1 for PJ1 */ {
 
             motorControl(0); // turn off fan motor
             
-            // We want to write out to our indicator Lights here
-            // *portYellowLED |= (0x01 << Pin);
-            // *portGreenLED &= ~(0x01 << Pin);
-            // *portRedLED &= ~(0x01 << Pin);
-            // *portBlueLED &= ~(0x01 << Pin);
+            *port_a |= 0b00100000; // Turns on Yellow LED;
+            *port_a &= 0b01110101; // Turns off Red, Green, Blue LEDS
         } else {
             printToSerial("Idle state entered");
             stateNum = 1; // Idle
             prevMin--;
 
-            // We want to write out to our indicator Lights here\
-            // *portGreenLED |= (0x01 << Pin);
-            // *portYellowLED &= ~(0x01 << Pin);
-            // *portBlueLED &= ~(0x01 << Pin);
+            *port_a |= 0b00000010;
+            *port_a &= 0b01010111;
         }
     }
 
-    if(/* Input of the pin the button is connected to */) {
+    if(*pin_j == 3) {
         if(startButtonReleased) {
             startButtonReleased = false;
         }
