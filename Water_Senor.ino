@@ -22,7 +22,10 @@ volatile unsigned char *myUDR0   = (unsigned char *)0x00C6;
 #define RDA 0x80
 #define TBE 0x20
 
+// Define the pin
 #define SENSOR_PIN A1
+
+//Minimum water level in percent
 #define MIN_WATER_LEVEL 10
 
 void setup() {
@@ -36,10 +39,14 @@ void setup() {
 void loop() {
 
   float voltage = readVoltage(SENSOR_PIN);
-  
+ 
+  // Calculate the water level based on the voltage reading
   float water_level = (voltage - 0.5) * 100;
-  
+  Serial.println(water_level);  
+  // check to see if water is below min level
   if (water_level < MIN_WATER_LEVEL){
+
+    // Prints a message
     Serial.println("Water is too low");
 
   }
@@ -48,8 +55,15 @@ void loop() {
 }
 
 float readVoltage(int pin){
+
   pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
+
+  // set the pin as input and read the voltage
+  pinMode(pin, INPUT_PULLUP);
+  float voltage = analogRead(pin) * 5.0 / 1023.0;
+
+  return voltage;
 }
 
 
