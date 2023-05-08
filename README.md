@@ -1,3 +1,3 @@
 # github-practice
 
-Ryan was here
+Group Members: Ryan Du, Carter Webb, Gavin Casper, and Tyler Sar
